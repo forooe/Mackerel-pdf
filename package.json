@@ -1,7 +1,6 @@
 {
-  "name": "ali-pdf-pro",
+  "name": "ali-pdf-final",
   "version": "1.0.0",
-  "description": "Advanced PDF Converter by Ali",
   "main": "index.js",
   "dependencies": {
     "telegraf": "^4.12.2",
