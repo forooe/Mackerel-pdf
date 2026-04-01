@@ -1,7 +1,7 @@
 {
-  "name": "ali-image-to-pdf",
+  "name": "ali-pdf-pro",
   "version": "1.0.0",
-  "description": "Image to PDF Converter by Ali",
+  "description": "Advanced PDF Converter by Ali",
   "main": "index.js",
   "dependencies": {
     "telegraf": "^4.12.2",
